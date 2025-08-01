@@ -168,14 +168,13 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         await query.message.reply_text(f"Failed to generate character build: {e}")
 
-# from enkanetwork import EnkaNetworkAPI
+from enkanetwork import EnkaNetworkAPI
 
-# async def update_assets() -> None:
-#   async with EnkaNetworkAPI() as client:
-#           await client.update_assets(lang=["EN"])
+async def update_assets() -> None:
+  async with EnkaNetworkAPI() as client:
+          await client.update_assets(lang=["EN"])
 
-# asyncio.run(update_assets())
-# asyncio.run(update_assets())
+asyncio.run(update_assets())
 def register_handlers(app):
 
     app.add_handler(CommandHandler("start", start))
