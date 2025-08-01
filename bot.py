@@ -173,8 +173,6 @@ from enkanetwork import EnkaNetworkAPI
 async def update_assets() -> None:
   async with EnkaNetworkAPI() as client:
           await client.update_assets(lang=["EN"])
-
-asyncio.run(update_assets())
 def register_handlers(app):
 
     app.add_handler(CommandHandler("start", start))
@@ -187,11 +185,14 @@ def register_handlers(app):
     app.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
     app.add_handler(CallbackQueryHandler(store_choice, pattern=r"(profile|card)_\d+"))
 
-def main():
+async def main():
+    print("Starting assets update...")
+    await update_assets()
+    print("Assets update complete.")
     app = Application.builder().token(BOT_TOKEN).build()
     register_handlers(app)
     print("Bot started...")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
