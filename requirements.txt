@@ -1,0 +1,5 @@
+python-telegram-bot==20.0
+enka==2.5.9
+enkacard==3.3.9
+aiohttp>=3.8.1
+pillow>=9.0.0
