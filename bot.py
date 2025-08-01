@@ -168,11 +168,11 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.message.reply_text("⚠️ Character not found in your profile.")
     except Exception as e:
         await query.message.reply_text(f"Failed to generate character build: {e}")
-from enkanetwork import EnkaNetworkAPI
-asyncio.run(update_assets())
-async def update_assets() -> None:
-    async with EnkaNetworkAPI() as client:
-        await client.update_assets(lang=["EN"])
+# from enkanetwork import EnkaNetworkAPI
+# asyncio.run(update_assets())
+# async def update_assets() -> None:
+#     async with EnkaNetworkAPI() as client:
+#         await client.update_assets(lang=["EN"])
 
 def register_handlers(app):
     # your handler registrations here
@@ -190,13 +190,13 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     register_handlers(app)
 
-    print("Starting assets update...")
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(update_assets())
-    print("Assets update complete.")
+    # print("Starting assets update...")
+    # loop = asyncio.get_event_loop()
+    # loop.run_until_complete(update_assets())
+    # print("Assets update complete.")
 
     print("Bot started...")
-    app.run_polling()  # synchronous call; internally manages the event loop on Railway
+    app.run_polling() 
 
 if __name__ == '__main__':
     main()
