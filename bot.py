@@ -8,7 +8,6 @@ from telegram.ext import (
 import enka
 from enkacard.encbanner import ENC
 import asyncio
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo')
 user_uid_map = {}
 user_template_settings = {}
 
@@ -170,30 +169,20 @@ from enkanetwork import EnkaNetworkAPI
 async def update_assets() -> None:
     async with EnkaNetworkAPI() as client:
         await client.update_assets(lang=["EN"])
+async def myc_handlers(application):
+    """Register MYC handlers and update assets for the bot."""
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("myc", myc))
+    application.add_handler(CommandHandler("genshinlogin", genshinlogin))
+    application.add_handler(CommandHandler("template", template_menu))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_uid))
+    application.add_handler(CallbackQueryHandler(character_callback, pattern=r"char_\d+"))
+    application.add_handler(CallbackQueryHandler(profile_selector, pattern="choose_profile_template"))
+    application.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
+    application.add_handler(CallbackQueryHandler(store_choice, pattern=r"(profile|card)_\d+"))
 
-def register_handlers(app):
-    # your handler registrations here
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myc", myc))
-    app.add_handler(CommandHandler("genshinlogin", genshinlogin))
-    app.add_handler(CommandHandler("template", template_menu))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_uid))
-    app.add_handler(CallbackQueryHandler(character_callback, pattern=r"char_\d+"))
-    app.add_handler(CallbackQueryHandler(profile_selector, pattern="choose_profile_template"))
-    app.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
-    app.add_handler(CallbackQueryHandler(store_choice, pattern=r"(profile|card)_\d+"))
-
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    register_handlers(app)
+    print("✅ MYC handlers registered.")
 
     print("Starting assets update...")
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(update_assets())
+    await update_assets()
     print("Assets update complete.")
-
-    print("Bot started...")
-    app.run_polling() 
-
-if __name__ == '__main__':
-    main()
