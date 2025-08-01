@@ -8,8 +8,6 @@ from telegram.ext import (
 import enka
 from enkacard.encbanner import ENC
 import asyncio
-from enkanetwork import EnkaNetworkAPI
-asyncio.run(update_assets())
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo')
 user_uid_map = {}
 user_template_settings = {}
@@ -168,11 +166,11 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.message.reply_text("⚠️ Character not found in your profile.")
     except Exception as e:
         await query.message.reply_text(f"Failed to generate character build: {e}")
-# from enkanetwork import EnkaNetworkAPI
-# asyncio.run(update_assets())
-# async def update_assets() -> None:
-#     async with EnkaNetworkAPI() as client:
-#         await client.update_assets(lang=["EN"])
+from enkanetwork import EnkaNetworkAPI
+asyncio.run(update_assets())
+async def update_assets() -> None:
+    async with EnkaNetworkAPI() as client:
+        await client.update_assets(lang=["EN"])
 
 def register_handlers(app):
     # your handler registrations here
@@ -190,10 +188,10 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     register_handlers(app)
 
-    # print("Starting assets update...")
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete(update_assets())
-    # print("Assets update complete.")
+    print("Starting assets update...")
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(update_assets())
+    print("Assets update complete.")
 
     print("Bot started...")
     app.run_polling() 
