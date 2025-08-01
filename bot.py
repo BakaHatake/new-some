@@ -168,13 +168,12 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         await query.message.reply_text(f"Failed to generate character build: {e}")
 
-from enkanetwork import EnkaNetworkAPI
-
 async def update_assets() -> None:
-  async with EnkaNetworkAPI() as client:
-          await client.update_assets(lang=["EN"])
-def register_handlers(app):
+    async with EnkaNetworkAPI() as client:
+        await client.update_assets(lang=["EN"])
 
+def register_handlers(app):
+    # your handler registrations here
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myc", myc))
     app.add_handler(CommandHandler("genshinlogin", genshinlogin))
@@ -185,14 +184,17 @@ def register_handlers(app):
     app.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
     app.add_handler(CallbackQueryHandler(store_choice, pattern=r"(profile|card)_\d+"))
 
-async def main():
-    print("Starting assets update...")
-    await update_assets()
-    print("Assets update complete.")
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
     register_handlers(app)
+
+    print("Starting assets update...")
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(update_assets())
+    print("Assets update complete.")
+
     print("Bot started...")
-    await app.run_polling()
+    app.run_polling()  # synchronous call; internally manages the event loop on Railway
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
