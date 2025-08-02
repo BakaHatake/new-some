@@ -5,5 +5,5 @@ aiohttp>=3.8.1
 pillow>=9.0.0
 pymongo
 nest_asyncio
-akasha
+akasha-py
 
