@@ -2,12 +2,10 @@ import os
 import tempfile
 import asyncio
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    InputMediaPhoto
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 )
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 import enka
 from enkacard.encbanner import ENC
@@ -18,43 +16,33 @@ from pymongo import MongoClient
 MONGO_URI = "mongodb+srv://bakahatake:anush%40123@baka.f3g4xlx.mongodb.net/"
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client['genshin']
-profiles_col = db['profiles']  # stores user_id -> uid
-templates_col = db['templates']  # stores user_id -> {"profile": X, "card": Y}
-
-# --- DB helpers ---
+profiles_col = db['profiles']
+templates_col = db['templates']
 
 def save_user_profile(user_id: int, uid: str):
     profiles_col.update_one({"user_id": user_id}, {"$set": {"uid": uid}}, upsert=True)
-
 def delete_user_profile(user_id: int):
     profiles_col.delete_one({"user_id": user_id})
-
 def get_user_profile(user_id: int):
     doc = profiles_col.find_one({"user_id": user_id})
     return doc["uid"] if doc else None
-
 def save_user_template(user_id: int, category: str, choice: int):
-    templates_col.update_one(
-        {"user_id": user_id},
-        {"$set": {category: choice}},
-        upsert=True
-    )
-
+    templates_col.update_one({"user_id": user_id}, {"$set": {category: choice}}, upsert=True)
 def get_user_template(user_id: int):
     doc = templates_col.find_one({"user_id": user_id})
-    if doc:
-        return {k: v for k, v in doc.items() if k not in ("_id", "user_id")}
+    if doc: return {k: v for k, v in doc.items() if k not in ("_id", "user_id")}
     return {}
 
-# === Telegram Bot Handlers ===
+def mark_owner(context, msg_id, user_id):
+    context.application.bot_data.setdefault("msg_owner", {})[msg_id] = user_id
+def get_owner(context, msg_id):
+    return context.application.bot_data.get("msg_owner", {}).get(msg_id)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome! Use /genshinlogin <UID> to login your Genshin Impact account.\n"
         "Then use /myc to view your profile card."
     )
-
-# --- /genshinlogin handler: fetch & preview with Save/Delete buttons ---
 
 async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -65,10 +53,8 @@ async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (8 <= len(uid) <= 10):
         await update.message.reply_text("UID length should be 8 to 10 digits.")
         return
-
-    # Send fetching message
-    msg = await update.message.reply_text(f"🔄 Fetching profile for UID {uid}...")
-
+    msg = await update.message.reply_text("🔄 Fetching profile for UID...", reply_to_message_id=update.message.message_id)
+    mark_owner(context, msg.message_id, user_id)
     try:
         async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
             response = await client.fetch_showcase(int(uid))
@@ -76,191 +62,149 @@ async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not characters:
             await msg.edit_text("No characters found or profile is private.")
             return
-
-        user_templates = get_user_template(user_id)
-        profile_tplt = user_templates.get("profile", 1)
-
+        templates = get_user_template(user_id)
+        profile_tplt = templates.get("profile", 1)
         async with ENC(uid=uid, lang="en") as encard:
             profile = await encard.profile(card=True, teamplate=profile_tplt)
-
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             image_path = tmp.name
             profile.card.save(image_path)
-
-        keyboard = InlineKeyboardMarkup(
-            [
-                [InlineKeyboardButton("💾 Save UID", callback_data="save_uid"),
-                 InlineKeyboardButton("🗑️ Delete UID", callback_data="delete_uid")]
-            ]
-        )
-
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💾 Save UID", callback_data=f"save_uid|{user_id}"),
+            InlineKeyboardButton("🗑️ Delete UID", callback_data=f"delete_uid|{user_id}")
+        ]])
         with open(image_path, "rb") as f:
-            await msg.delete()
-            sent_msg = await context.bot.send_photo(
-                chat_id=msg.chat_id,
-                photo=f,
-                caption=f"📋 UID {uid} Profile",
-                reply_markup=keyboard   # CHANGED!
+            await msg.edit_media(
+                media=InputMediaPhoto(f, caption=f"📋 UID {uid} Profile\nDo you want to save this UID?"),
+                reply_markup=keyboard
             )
         os.remove(image_path)
         context.user_data['temp_uid'] = uid
-        context.user_data['preview_message_id'] = sent_msg.message_id
-
     except Exception as e:
         await msg.edit_text(f"Failed to fetch profile or generate card: {e}")
 
-# Callbacks for Save/Delete buttons after /genshinlogin preview
 async def save_or_delete_uid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    data = query.data
-
+    action, orig_user_id = query.data.split('|')
+    orig_user_id = int(orig_user_id)
+    if query.from_user.id != orig_user_id:
+        await query.answer("Only the original user can use these buttons!", show_alert=True)
+        return
     temp_uid = context.user_data.get('temp_uid')
     if not temp_uid:
         await query.message.edit_caption("Session expired or invalid. Please try /genshinlogin again.")
         return
-
-    if data == "save_uid":
-        save_user_profile(user_id, temp_uid)
+    if action == "save_uid":
+        save_user_profile(orig_user_id, temp_uid)
         await query.message.edit_caption(f"✅ UID {temp_uid} saved successfully.")
-    elif data == "delete_uid":
-        delete_user_profile(user_id)
+    elif action == "delete_uid":
+        delete_user_profile(orig_user_id)
         await query.message.edit_caption(f"🗑️ UID {temp_uid} was not saved / deleted.")
     else:
         await query.message.edit_caption("Unknown action.")
-
     context.user_data.pop('temp_uid', None)
-    context.user_data.pop('preview_message_id', None)
-
-# --- /myc command — show profile card with inline character buttons ---
 
 async def myc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     uid = get_user_profile(user_id)
     if not uid:
-        await update.message.reply_text("🔢 You have not set your UID. Use /genshinlogin <uid>.")
+        await update.message.reply_text("You have not set your UID. Use /genshinlogin <uid>.")
         return
-
-    msg = await update.message.reply_text("🔄 Fetching your profile card...")
+    orig_msg = update.message
+    msg = await orig_msg.reply_text("🔄 Fetching your profile card...", reply_to_message_id=orig_msg.message_id)
+    mark_owner(context, msg.message_id, user_id)
     try:
         await send_profile_card(uid, msg, user_id, context)
     except Exception as e:
         await msg.edit_text(f"Failed to fetch profile or generate card: {e}")
 
-async def send_profile_card(uid: str, msg, user_id: int, context: ContextTypes.DEFAULT_TYPE):
+async def send_profile_card(uid, msg, user_id, context):
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
         response = await client.fetch_showcase(int(uid))
-
     characters = response.characters
     if not characters:
         await msg.edit_text("No characters found or profile is private.")
         return
-
     user_templates = get_user_template(user_id)
     profile_tplt = user_templates.get("profile", 1)
-
     async with ENC(uid=uid, lang="en") as encard:
         profile = await encard.profile(card=True, teamplate=profile_tplt)
-
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         image_path = tmp.name
         profile.card.save(image_path)
-
     keyboard, row = [], []
     for idx, char in enumerate(characters[:12]):
-        row.append(InlineKeyboardButton(char.name, callback_data=f"char_{char.id}"))
+        row.append(InlineKeyboardButton(char.name, callback_data=f"char_{char.id}|{user_id}"))
         if (idx + 1) % 4 == 0:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    keyboard = InlineKeyboardMarkup(keyboard)   # use consistent variable name
-
+    keyboard = InlineKeyboardMarkup(keyboard)
     with open(image_path, "rb") as f:
-        await msg.delete()
-        sent_msg = await context.bot.send_photo(
-            chat_id=msg.chat_id,
-            photo=f,
-            caption=f"📋 UID {uid} Profile",
-            reply_markup=keyboard   # CHANGED!
+        await msg.edit_media(
+            media=InputMediaPhoto(f, caption=f"📋 UID {uid} Profile"),
+            reply_markup=keyboard
         )
     os.remove(image_path)
-    context.user_data['last_profile_message_id'] = sent_msg.message_id
-    context.user_data['uid'] = uid
-
-# --- Character card callback: show character card with "Go Back" option ---
 
 async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    cbdata, orig_user_id = query.data.split('|')
+    orig_user_id = int(orig_user_id)
+    if query.from_user.id != orig_user_id:
+        await query.answer("Only the original user can use these buttons!", show_alert=True)
+        return
     user_id = query.from_user.id
     uid = get_user_profile(user_id)
     if not uid:
         await query.message.edit_text("UID not set. Please use /genshinlogin first.")
         return
-
-    char_id = int(query.data.split("_")[1])
-
-    try:
-        await query.message.edit_caption("🔄 Fetching character build card...")
-
-        user_templates = get_user_template(user_id)
-        card_tplt = user_templates.get("card", 1)
-
-        async with ENC(uid=uid, lang="en") as encard:
-            result = await encard.creat(template=card_tplt)
-
-        found = False
-        for card_obj in result.card:
-            if card_obj.id == char_id:
-                found = True
-                char_name = card_obj.name
-                img = card_obj.card
-                if img is None:
-                    await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
-                    return
-
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                    image_path = tmp.name
-                    img.save(image_path)
-
-                go_back_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅️ Go Back", callback_data="go_back_profile")]
-                ])
-
-                with open(image_path, "rb") as f:
-                    await query.message.edit_media(
-                        media=InputMediaPhoto(f, caption=f"🔧 Build: {char_name}"),
-                        reply_markup=go_back_keyboard
-                    )
-                os.remove(image_path)
-                break
-        if not found:
-            await query.message.edit_caption("⚠️ Character not found in your profile.")
-
-    except Exception as e:
-        await query.message.edit_caption(f"Failed to generate character build: {e}")
-
-# --- Go Back button callback ---
+    char_id = int(cbdata.split("_")[1])
+    await query.message.edit_caption("🔄 Fetching character build card...")
+    user_templates = get_user_template(user_id)
+    card_tplt = user_templates.get("card", 1)
+    async with ENC(uid=uid, lang="en") as encard:
+        result = await encard.creat(template=card_tplt)
+    found = False
+    for card_obj in result.card:
+        if card_obj.id == char_id:
+            found = True
+            char_name = card_obj.name
+            img = card_obj.card
+            if img is None:
+                await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
+                return
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                image_path = tmp.name
+                img.save(image_path)
+            go_back_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
+            ])
+            with open(image_path, "rb") as f:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(f, caption=f"🔧 Build: {char_name}"),
+                    reply_markup=go_back_keyboard
+                )
+            os.remove(image_path)
+            break
+    if not found:
+        await query.message.edit_caption("⚠️ Character not found in your profile.")
 
 async def go_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    cbdata, orig_user_id = query.data.split('|')
+    orig_user_id = int(orig_user_id)
+    if query.from_user.id != orig_user_id:
+        await query.answer("Only the original user can use these buttons!", show_alert=True)
+        return
     user_id = query.from_user.id
     uid = get_user_profile(user_id)
     if not uid:
-        await query.message.edit_text("UID not set. Please use /genshinlogin first.")
+        await query.message.edit_text("UID not set. Use /genshinlogin.")
         return
-
-    msg = query.message
-    try:
-        await query.message.edit_caption("🔄 Regenerating profile card...")
-        await send_profile_card(uid, msg, user_id, context)
-    except Exception as e:
-        await query.message.edit_caption(f"Failed to regenerate profile card: {e}")
-
-# --- Templates customization handlers ---
+    await query.message.edit_caption("🔄 Regenerating profile card...")
+    await send_profile_card(uid, query.message, user_id, context)
 
 async def template_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
@@ -292,13 +236,12 @@ async def store_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(parts) < 2:
         await query.answer("Invalid selection")
         return
-    category = parts[0]  # 'profile' or 'card'
+    category = parts[0]
     try:
         choice = int(parts[1])
     except:
         await query.answer("Invalid selection")
         return
-
     save_user_template(user_id, category, choice)
     await query.answer()
     await query.message.reply_text(f"✅ {category.capitalize()} template set to {choice}")
@@ -308,13 +251,12 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("genshinlogin", genshinlogin))
     app.add_handler(CommandHandler("myc", myc))
     app.add_handler(CommandHandler("template", template_menu))
-    app.add_handler(CallbackQueryHandler(save_or_delete_uid_callback, pattern="^(save_uid|delete_uid)$"))
+    app.add_handler(CallbackQueryHandler(save_or_delete_uid_callback, pattern=r"^(save_uid|delete_uid)\|\d+$"))
     app.add_handler(CallbackQueryHandler(profile_selector, pattern="choose_profile_template"))
     app.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
     app.add_handler(CallbackQueryHandler(store_choice, pattern=r"^(profile|card)_\d+$"))
-    app.add_handler(CallbackQueryHandler(character_callback, pattern=r"^char_\d+$"))
-    app.add_handler(CallbackQueryHandler(go_back_callback, pattern="go_back_profile"))
-
+    app.add_handler(CallbackQueryHandler(character_callback, pattern=r"^char_\d+\|\d+$"))
+    app.add_handler(CallbackQueryHandler(go_back_callback, pattern=r"^go_back_profile\|\d+$"))
     print("✅ Handlers registered.")
 
 async def update_assets():
@@ -328,7 +270,7 @@ async def update_assets():
         print(f"❌ Asset update failed: {e}")
 
 async def main():
-    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"
+    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"  # Replace with your bot token
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
     update_assets_env = os.getenv("UPDATE_ASSETS", "false").strip().lower()
