@@ -348,7 +348,7 @@ async def update_assets():
         print(f"❌ Asset update failed: {e}")
 
 async def main():
-    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"  # Use os.getenv("BOT_TOKEN") in prod
+    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
 
@@ -360,15 +360,14 @@ async def main():
     print("🚀 Bot starting...")
     await application.run_polling()
 
+# Main entry point
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except RuntimeError as e:
         if "event loop is already running" in str(e):
-            import nest_asyncio
             nest_asyncio.apply()
             loop = asyncio.get_event_loop()
-            loop.create_task(main())
-            loop.run_forever()
+            loop.run_until_complete(main())
         else:
             raise
