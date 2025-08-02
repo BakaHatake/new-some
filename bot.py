@@ -469,8 +469,25 @@ async def loadbuild_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=keyboard
     )
 async def builds_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Just call the builds list function again
-    await builds(update, context)
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # Fetch builds from DB
+    builds = list(db['custom_builds'].find({"user_id": user_id}))
+    if not builds:
+        await query.answer()
+        await query.message.edit_text("You have no saved builds.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton(b['name'].capitalize(), callback_data=f"loadbuild_{b['name']}")]
+        for b in builds
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.answer()  # Acknowledge the button press
+    await query.message.edit_text("Your saved builds:", reply_markup=reply_markup)
+
 
 async def builds_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
