@@ -336,21 +336,25 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(go_back_callback, pattern="go_back_profile"))
 
     print("✅ Handlers registered.")
-import nest_asyncio
-import asyncio
+
 async def update_assets():
     from enkanetwork import EnkaNetworkAPI
-    print("Updating assets...")
+    print("🔄 Updating assets...")
     async with EnkaNetworkAPI() as client:
         await client.update_assets(lang=["EN"])
-    print("Assets update complete.")
+    print("✅ Assets update complete.")
 
 async def main():
-    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"  # Set your bot token here!
+    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"  # Use os.getenv("BOT_TOKEN") in prod
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
-    await update_assets()    # You can comment this out if you want to skip asset update on every start
-    print("Bot starting...")
+
+    if os.getenv("UPDATE_ASSETS", "false").lower() == "true":
+        await update_assets()
+    else:
+        print("⚠️ Skipping asset update (set UPDATE_ASSETS=true to enable)")
+
+    print("🚀 Bot starting...")
     await application.run_polling()
 
 async def safe_main():
@@ -361,7 +365,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except RuntimeError as e:
         if "event loop is already running" in str(e):
-            # Patch nested loops and run manually
             nest_asyncio.apply()
             loop = asyncio.get_event_loop()
             loop.create_task(safe_main())
