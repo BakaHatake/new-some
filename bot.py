@@ -11,6 +11,9 @@ import enka
 from enkacard.encbanner import ENC
 from enkanetwork import EnkaNetworkAPI
 from pymongo import MongoClient
+import akasha
+from akasha.enums import Language
+import nest_asyncio
 
 # --- MongoDB setup ---
 MONGO_URI = "mongodb+srv://bakahatake:anush%40123@baka.f3g4xlx.mongodb.net/"
@@ -19,15 +22,24 @@ db = mongo_client['genshin']
 profiles_col = db['profiles']
 templates_col = db['templates']
 
+# Helper to make PIL image saving async-safe
+async def save_image_async(img_obj, path):
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, img_obj.save, path)
+
 def save_user_profile(user_id: int, uid: str):
     profiles_col.update_one({"user_id": user_id}, {"$set": {"uid": uid}}, upsert=True)
+
 def delete_user_profile(user_id: int):
     profiles_col.delete_one({"user_id": user_id})
+
 def get_user_profile(user_id: int):
     doc = profiles_col.find_one({"user_id": user_id})
     return doc["uid"] if doc else None
+
 def save_user_template(user_id: int, category: str, choice: int):
     templates_col.update_one({"user_id": user_id}, {"$set": {category: choice}}, upsert=True)
+
 def get_user_template(user_id: int):
     doc = templates_col.find_one({"user_id": user_id})
     if doc: return {k: v for k, v in doc.items() if k not in ("_id", "user_id")}
@@ -35,6 +47,7 @@ def get_user_template(user_id: int):
 
 def mark_owner(context, msg_id, user_id):
     context.application.bot_data.setdefault("msg_owner", {})[msg_id] = user_id
+
 def get_owner(context, msg_id):
     return context.application.bot_data.get("msg_owner", {}).get(msg_id)
 
@@ -43,8 +56,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Welcome! Use /genshinlogin <UID> to login your Genshin Impact account.\n"
         "Then use /myc to view your profile card."
     )
-import akasha
-from akasha.enums import Language
 
 async def fetch_akasha_rankings(uid: int) -> dict:
     async with akasha.AkashaAPI(lang=Language.ENGLISH) as api:
@@ -54,7 +65,6 @@ async def fetch_akasha_rankings(uid: int) -> dict:
             if not character.calculations:
                 continue
             calc = character.calculations[0]
-            # Fetch total number of users for this rank
             out_of = getattr(calc, 'out_of', None)
             if out_of is None:
                 try:
@@ -93,7 +103,7 @@ async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             profile = await encard.profile(card=True, teamplate=profile_tplt)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             image_path = tmp.name
-            profile.card.save(image_path)
+            await save_image_async(profile.card, image_path)
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("💾 Save UID", callback_data=f"save_uid|{user_id}"),
             InlineKeyboardButton("🗑️ Delete UID", callback_data=f"delete_uid|{user_id}")
@@ -144,10 +154,6 @@ async def myc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"Failed to fetch profile or generate card: {e}")
 
 async def send_profile_card(uid, msg, user_id, context):
-    import akasha
-    from akasha.enums import Language
-
-    # Fetch Enka profile/character info
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
         response = await client.fetch_showcase(int(uid))
     characters = response.characters
@@ -155,7 +161,6 @@ async def send_profile_card(uid, msg, user_id, context):
         await msg.edit_text("No characters found or profile is private.")
         return
 
-    # Fetch Akasha Top % and Rankings info
     async with akasha.AkashaAPI(lang=Language.ENGLISH) as api:
         akasha_rankings = {}
         user_calcs = await api.get_calculations_for_user(uid)
@@ -181,15 +186,11 @@ async def send_profile_card(uid, msg, user_id, context):
 
     async with ENC(uid=uid, lang="en") as encard:
         profile = await encard.profile(card=True, teamplate=profile_tplt)
-
-
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         image_path = tmp.name
-        profile.card.save(image_path)
+        await save_image_async(profile.card, image_path)
 
-    # ONLY Top X% (Rank/Total) for every character!
     caption = f"📋 UID {uid} Profile\n"
-
     keyboard, row = [], []
     for idx, char in enumerate(characters[:12]):
         row.append(InlineKeyboardButton(char.name, callback_data=f"char_{char.id}|{user_id}"))
@@ -206,7 +207,6 @@ async def send_profile_card(uid, msg, user_id, context):
             reply_markup=keyboard
         )
     os.remove(image_path)
-
 
 async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -225,23 +225,20 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     char_id = int(cbdata.split("_")[1])
     await query.message.edit_caption("🔄 Fetching character build card...")
 
-    # Fetch Enka character list for mapping char_id to char_name
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
         response = await client.fetch_showcase(int(uid))
     characters = response.characters
     char_name = next((c.name for c in characters if c.id == char_id), None)
 
-    # Fetch Akasha per-character ranking
     akasha_rankings = await fetch_akasha_rankings(uid)
     a = akasha_rankings.get(char_name) if char_name else None
 
-    # Compose caption: ONLY Top X% (Rank/Total)
     caption = f"🔧 Build: {char_name}"
     if a:
         percent = f"{a['top_percent']:.2f}"                  
         ranking = f"{a['ranking']:,}"                          
         out_of = f"{a['out_of']:,}" if isinstance(a['out_of'], int) else a['out_of']
-        caption += f"\nTop {percent}% ({ranking}/{out_of})"  
+        caption += f"\nTop {percent}% ({ranking}/{out_of})"
     else:
         caption += "\nAkasha ranking: —"
     user_templates = get_user_template(user_id)
@@ -249,20 +246,17 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     async with ENC(uid=uid, lang="en") as encard:
         result = await encard.creat(template=card_tplt, akasha=a)
 
-    # Find the card image for this character
     found = False
     for card_obj in result.card:
         if card_obj.id == char_id:
             found = True
             img = card_obj.card
-
-
             if img is None:
                 await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
                 return
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 image_path = tmp.name
-                img.save(image_path)
+                await save_image_async(img, image_path)
             go_back_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
             ])
@@ -275,8 +269,6 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             break
     if not found:
         await query.message.edit_caption("⚠️ Character not found in your profile.")
-
-
 
 async def go_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -357,7 +349,7 @@ async def update_assets():
         print(f"❌ Asset update failed: {e}")
 
 async def main():
-    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"  # Replace with your bot token
+    TOKEN = os.environ.get("TELEGRAM_TOKEN", "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo")  # Recommended: use environment variable for token
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
     update_assets_env = os.getenv("UPDATE_ASSETS", "false").strip().lower()
@@ -369,7 +361,6 @@ async def main():
     print("🚀 Bot starting...")
     await application.run_polling()
 
-import nest_asyncio
 if __name__ == "__main__":
     try:
         loop = asyncio.get_event_loop()
@@ -377,3 +368,4 @@ if __name__ == "__main__":
         loop.run_until_complete(main())
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
+    
