@@ -238,10 +238,12 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Compose caption: ONLY Top X% (Rank/Total)
     caption = f"🔧 Build: {char_name}"
     if a:
-        caption += f"\nAkasha: Top {a['top_percent']}% ({a['ranking']}/{a['out_of']})"
+        percent = f"{a['top_percent']:.2f}"                  
+        ranking = f"{a['ranking']:,}"                          
+        out_of = f"{a['out_of']:,}" if isinstance(a['out_of'], int) else a['out_of']
+        caption += f"\nTop {percent}% ({ranking}/{out_of})"  
     else:
         caption += "\nAkasha ranking: —"
-
     user_templates = get_user_template(user_id)
     card_tplt = user_templates.get("card", 1)
     async with ENC(uid=uid, lang="en") as encard:
