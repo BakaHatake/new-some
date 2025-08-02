@@ -435,18 +435,41 @@ async def savebuild(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+import random
+
+# List up to 5 banner image URLs
+banner_urls = [
+    "https://res.cloudinary.com/dvpz1tzam/image/upload/v1753195129/waifus/nr6jjemtoghybqtkuefv.jpg",
+    "https://res.cloudinary.com/dvpz1tzam/image/upload/v1753194735/waifus/pu5nuv9pezqpv2hq8gt1.jpg",
+    "https://res.cloudinary.com/dvpz1tzam/image/upload/v1753194786/waifus/op4q8nadbxhgki5gzl1q.jpg",
+    "https://res.cloudinary.com/dvpz1tzam/image/upload/v1753068788/waifus/u6rgdopeu3ek09znijby.jpg",
+    "https://res.cloudinary.com/dvpz1tzam/image/upload/v1753021778/waifus/kkclafc4kpjxk9woukqb.jpg",
+]
+
+def get_random_banner():
+    return random.choice(banner_urls)
+
 async def builds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     builds = list(db['custom_builds'].find({"user_id": user_id}))
+
     if not builds:
         await update.message.reply_text("You have no saved builds.")
         return
+
     keyboard = [
         [InlineKeyboardButton(b['name'].capitalize(), callback_data=f"loadbuild_{b['name']}")]
         for b in builds
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Your saved builds:", reply_markup=reply_markup)
+    banner_url = get_random_banner()
+    caption = "Your saved builds:"
+
+    await update.message.reply_photo(
+        photo=banner_url,
+        caption=caption,
+        reply_markup=reply_markup
+    )
 
 async def loadbuild_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -454,29 +477,32 @@ async def loadbuild_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     build_name = query.data[len("loadbuild_"):].lower()
     build = db['custom_builds'].find_one({"user_id": user_id, "name": build_name})
     if not build:
-        await query.message.edit_text("Build not found.")
+        await query.answer()
+        await query.message.edit_caption("Build not found.")
         return
     url = build["url"]
     caption = build["name"].capitalize()
+
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("⬅️ Back", callback_data="builds_back"),
+            InlineKeyboardButton("⬅️ Back (user locked)", callback_data="builds_back"),
             InlineKeyboardButton("🗑️ Delete (user locked)", callback_data=f"builds_delete_{build_name}")
         ]
     ])
+    await query.answer()
     await query.message.edit_media(
         media=InputMediaPhoto(url, caption=caption),
         reply_markup=keyboard
     )
+
 async def builds_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
 
-    # Fetch builds from DB
     builds = list(db['custom_builds'].find({"user_id": user_id}))
     if not builds:
         await query.answer()
-        await query.message.edit_text("You have no saved builds.")
+        await query.message.edit_caption("You have no saved builds.")
         return
 
     keyboard = [
@@ -484,19 +510,22 @@ async def builds_back_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         for b in builds
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    banner_url = get_random_banner()
+    caption = "Your saved builds:"
 
-    await query.answer()  # Acknowledge the button press
-    await query.message.edit_text("Your saved builds:", reply_markup=reply_markup)
-
+    await query.answer()
+    await query.message.edit_media(
+        media=InputMediaPhoto(banner_url, caption=caption),
+        reply_markup=reply_markup
+    )
 
 async def builds_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     build_name = query.data[len("builds_delete_"):].lower()
     db['custom_builds'].delete_one({"user_id": user_id, "name": build_name})
+    await query.answer()
     await query.message.edit_caption(f"❌ Build '{build_name.capitalize()}' deleted!")
-
-
 
 
 def register_handlers(app: Application):
