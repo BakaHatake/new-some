@@ -11,14 +11,22 @@ import enka
 from enkacard.encbanner import ENC
 from enkanetwork import EnkaNetworkAPI
 from pymongo import MongoClient
-
+import cloudinary
+cloudinary.config(
+    cloud_name='dvpz1tzam',
+    api_key='895687319552522',
+    api_secret='RHMZdboQRoneTPZv8SyaSg0ITfg')
 # --- MongoDB setup ---
 MONGO_URI = "mongodb+srv://bakahatake:anush%40123@baka.f3g4xlx.mongodb.net/"
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client['genshin']
 profiles_col = db['profiles']
 templates_col = db['templates']
+import asyncio
 
+async def save_image_async(img_obj, path):
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, img_obj.save, path)
 def save_user_profile(user_id: int, uid: str):
     profiles_col.update_one({"user_id": user_id}, {"$set": {"uid": uid}}, upsert=True)
 def delete_user_profile(user_id: int):
@@ -208,6 +216,10 @@ async def send_profile_card(uid, msg, user_id, context):
     os.remove(image_path)
 
 
+from urllib.request import urlopen
+from PIL import Image
+import io
+
 async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     cbdata, orig_user_id = query.data.split('|')
@@ -225,42 +237,58 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     char_id = int(cbdata.split("_")[1])
     await query.message.edit_caption("🔄 Fetching character build card...")
 
-    # Fetch Enka character list for mapping char_id to char_name
+    # Get character name for DB lookups
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
         response = await client.fetch_showcase(int(uid))
     characters = response.characters
     char_name = next((c.name for c in characters if c.id == char_id), None)
 
-    # Fetch Akasha per-character ranking
+    # Akasha info (for caption and overlays if needed)
     akasha_rankings = await fetch_akasha_rankings(uid)
     a = akasha_rankings.get(char_name) if char_name else None
 
-    # Compose caption: ONLY Top X% (Rank/Total)
     caption = f"🔧 Build: {char_name}"
     if a:
-        caption += f"\nAkasha: Top {a['top_percent']}% ({a['ranking']}/{a['out_of']})"
+        percent = f"{a['top_percent']:.2f}"
+        ranking = f"{a['ranking']:,}"
+        out_of = f"{a['out_of']:,}" if isinstance(a['out_of'], int) else a['out_of']
+        caption += f"\nTop {percent}% ({ranking}/{out_of})"
     else:
         caption += "\nAkasha ranking: —"
+
+    # Try loading user's custom portrait (if exists)
+    custom_img_doc = db['custom_images'].find_one({
+        "user_id": user_id,
+        "char_name": char_name.lower() if char_name else None
+    })
+    custom_img = None
+    if custom_img_doc and custom_img_doc.get("url"):
+        try:
+            img_bytes = urlopen(custom_img_doc["url"]).read()
+            custom_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+        except Exception as e:
+            await query.message.edit_caption(f"⚠️ Could not load custom image: {e}")
+            return
 
     user_templates = get_user_template(user_id)
     card_tplt = user_templates.get("card", 1)
     async with ENC(uid=uid, lang="en") as encard:
-        result = await encard.creat(template=card_tplt, akasha=a)
+        if custom_img is not None:
+            result = await encard.creat(template=card_tplt, akasha=a, portrait=custom_img)
+        else:
+            result = await encard.creat(template=card_tplt, akasha=a)
 
-    # Find the card image for this character
     found = False
     for card_obj in result.card:
         if card_obj.id == char_id:
             found = True
             img = card_obj.card
-
-
             if img is None:
                 await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
                 return
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 image_path = tmp.name
-                img.save(image_path)
+                await save_image_async(img, image_path)
             go_back_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
             ])
@@ -380,6 +408,50 @@ async def store_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Just edit message to confirm selection
         await query.message.edit_text(f"✅ {category.capitalize()} template set to {choice}")
+BOT_ADMIN_USER_ID = 5192424390
+
+async def setimage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or update.effective_user.first_name or str(user_id)
+    if not context.args or not update.message.reply_to_message or not update.message.reply_to_message.photo:
+        await update.message.reply_text("Reply to a photo with /setimage <character name>.")
+        return
+    char_name = context.args[0].strip().lower()
+
+    # Download photo
+    photo = update.message.reply_to_message.photo[-1]
+    photo_file = await photo.get_file()
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        await photo_file.download_to_drive(tmp.name)
+        image_path = tmp.name
+
+    # Upload to Cloudinary
+    try:
+        upload_result = cloudinary.uploader.upload(image_path, folder="genshin_custom_images")
+        cloud_url = upload_result["secure_url"]
+    except Exception as e:
+        await update.message.reply_text(f"Upload to cloud failed: {e}")
+        os.remove(image_path)
+        return
+    os.remove(image_path)
+
+    # Save to MongoDB
+    db['custom_images'].update_one(
+        {"user_id": user_id, "char_name": char_name},
+        {"$set": {"url": cloud_url}},
+        upsert=True
+    )
+    await update.message.reply_text(f"Custom image for {char_name.capitalize()} saved!")
+
+    # DM the bot admin/user
+    admin_text = (
+        f"User @{username} (ID: {user_id}) saved image for '{char_name}': {cloud_url}"
+    )
+    try:
+        await context.bot.send_message(chat_id=BOT_ADMIN_USER_ID, text=admin_text)
+    except Exception as e:
+        # Handle errors (e.g., you never started the bot with /start)
+        pass
 
 
 def register_handlers(app: Application):
