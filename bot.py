@@ -336,7 +336,8 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(go_back_callback, pattern="go_back_profile"))
 
     print("✅ Handlers registered.")
-
+import nest_asyncio
+import asyncio
 async def update_assets():
     from enkanetwork import EnkaNetworkAPI
     print("Updating assets...")
@@ -352,15 +353,19 @@ async def main():
     print("Bot starting...")
     await application.run_polling()
 
+async def safe_main():
+    await main()
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except RuntimeError as e:
         if "event loop is already running" in str(e):
-            import nest_asyncio
+            # Patch nested loops and run manually
             nest_asyncio.apply()
             loop = asyncio.get_event_loop()
-            loop.create_task(main())
+            loop.create_task(safe_main())
+            loop.run_forever()
         else:
             raise
 
