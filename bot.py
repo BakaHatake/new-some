@@ -68,26 +68,6 @@ async def fetch_akasha_rankings(uid: int) -> dict:
                 "id": getattr(character, "id", None)
             }
         return results
-from PIL import ImageDraw, ImageFont
-
-def overlay_akasha_rankings(image, akasha_data):
-    draw = ImageDraw.Draw(image)
-    try:
-        font = ImageFont.truetype("arial.ttf", 22)  # Use a real font if available on your system
-    except Exception:
-        font = ImageFont.load_default()
-    x, y = 30, 30  # Starting position
-    line_height = 28
-    for char, data in akasha_data.items():
-        # Optional: skip missing values
-        if not data.get("top_percent") or not data.get("ranking") or not data.get("out_of"):
-            continue
-        text = f"{char}: Top {data['top_percent']}% ({data['ranking']}/{data['out_of']})"
-        # Optional: draw a shadow/box for text contrast
-        draw.text((x+2, y+2), text, font=font, fill="black")
-        draw.text((x, y), text, font=font, fill="white")
-        y += line_height
-    return image
 
 async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -201,7 +181,6 @@ async def send_profile_card(uid, msg, user_id, context):
 
     async with ENC(uid=uid, lang="en") as encard:
         profile = await encard.profile(card=True, teamplate=profile_tplt)
-    profile.card = overlay_akasha_rankings(profile.card, akasha_rankings)
 
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -209,15 +188,7 @@ async def send_profile_card(uid, msg, user_id, context):
         profile.card.save(image_path)
 
     # ONLY Top X% (Rank/Total) for every character!
-    caption = f"📋 UID {uid} Profile"
-    for char in characters:
-        a = akasha_rankings.get(char.name)
-        if a:
-            caption += (
-                f"\n<b>{char.name}</b>: Top {a['top_percent']}% ({a['ranking']}/{a['out_of']})"
-            )
-        else:
-            caption += f"\n<b>{char.name}</b>: —"
+    caption = f"📋 UID {uid} Profile\n"
 
     keyboard, row = [], []
     for idx, char in enumerate(characters[:12]):
@@ -282,7 +253,7 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if card_obj.id == char_id:
             found = True
             img = card_obj.card
-            img = overlay_akasha_rankings(img, {char_name: a})  # Overlays only this char's rank
+
 
             if img is None:
                 await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
