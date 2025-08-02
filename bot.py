@@ -338,11 +338,14 @@ def register_handlers(app: Application):
     print("✅ Handlers registered.")
 
 async def update_assets():
-    from enkanetwork import EnkaNetworkAPI
-    print("🔄 Updating assets...")
-    async with EnkaNetworkAPI() as client:
-        await client.update_assets(lang=["EN"])
-    print("✅ Assets update complete.")
+    try:
+        from enkanetwork import EnkaNetworkAPI
+        print("🔄 Updating assets...")
+        async with EnkaNetworkAPI() as client:
+            await client.update_assets(lang=["EN"])
+        print("✅ Assets update complete.")
+    except Exception as e:
+        print(f"❌ Asset update failed: {e}")
 
 async def main():
     TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"  # Use os.getenv("BOT_TOKEN") in prod
@@ -357,9 +360,6 @@ async def main():
     print("🚀 Bot starting...")
     await application.run_polling()
 
-async def safe_main():
-    await main()
-
 if __name__ == "__main__":
     try:
         asyncio.run(main())
@@ -367,8 +367,7 @@ if __name__ == "__main__":
         if "event loop is already running" in str(e):
             nest_asyncio.apply()
             loop = asyncio.get_event_loop()
-            loop.create_task(safe_main())
+            loop.create_task(main())
             loop.run_forever()
         else:
             raise
-
