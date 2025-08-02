@@ -186,7 +186,7 @@ async def send_profile_card(uid, msg, user_id, context):
         image_path = tmp.name
         profile.card.save(image_path)
 
-    # Compose the caption to show only Top X% and (Rank/Total) for every character
+    # ONLY Top X% (Rank/Total) for every character!
     caption = f"📋 UID {uid} Profile"
     for char in characters:
         a = akasha_rankings.get(char.name)
@@ -213,6 +213,7 @@ async def send_profile_card(uid, msg, user_id, context):
             reply_markup=keyboard
         )
     os.remove(image_path)
+
 
 async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
