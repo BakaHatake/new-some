@@ -246,7 +246,7 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     characters = response.characters
     char_name = next((c.name for c in characters if c.id == char_id), None)
 
-    # Akasha info (for caption and overlays if needed)
+    # Akasha info for caption and overlays
     akasha_rankings = await fetch_akasha_rankings(uid)
     a = akasha_rankings.get(char_name) if char_name else None
 
@@ -259,33 +259,23 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         caption += "\nAkasha ranking: —"
 
-    # Try loading user's custom portrait (if exists)
-    custom_img_doc = db['custom_images'].find_one({
+    # Try loading user's custom background image (saved via `/setimage <char>`)
+    custom_bg_doc = db['custom_images'].find_one({
         "user_id": user_id,
         "char_name": char_name.lower() if char_name else None
     })
-    custom_img = None
-    if custom_img_doc and custom_img_doc.get("url"):
-        try:
-            img_bytes = urlopen(custom_img_doc["url"]).read()
-            custom_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
-        except Exception as e:
-            await query.message.edit_caption(f"⚠️ Could not load custom image: {e}")
-            return
+    custom_bg_url = custom_bg_doc["url"] if custom_bg_doc else None
 
     user_templates = get_user_template(user_id)
     card_tplt = user_templates.get("card", 1)
 
-    # Pass the custom image under the correct kwarg if supported; otherwise, omit
+    # Prepare arguments for ENC card generator
+    creat_args = dict(template=card_tplt, akasha=a)
+    if custom_bg_url:
+        creat_args["background"] = custom_bg_url  # Pass as background to ENC, per documentation
+
     async with ENC(uid=uid, lang="en") as encard:
-        try:
-            if custom_img is not None:
-                result = await encard.creat(template=card_tplt, akasha=a, character_art={str(char_id): custom_img})
-            else:
-                result = await encard.creat(template=card_tplt, akasha=a)
-        except TypeError:
-            # Fallback for old API
-            result = await encard.creat(template=card_tplt, akasha=a)
+        result = await encard.creat(**creat_args)
 
     found = False
     for card_obj in result.card:
@@ -297,7 +287,6 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 image_path = tmp.name
-                # Ensure save_image_async exists and is imported/defined
                 await save_image_async(img, image_path)
             go_back_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
