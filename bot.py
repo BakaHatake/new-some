@@ -98,14 +98,13 @@ async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         with open(image_path, "rb") as f:
             await msg.delete()
-            sent_msg = await update.message.reply_photo(
-                f,
-                caption=f"📋 Preview Profile Card for UID {uid}\n"
-                        "Do you want to save this UID?",
-                reply_markup=keyboard
+            sent_msg = await context.bot.send_photo(
+                chat_id=msg.chat_id,
+                photo=f,
+                caption=f"📋 UID {uid} Profile",
+                reply_markup=reply_markup
             )
         os.remove(image_path)
-
         # Store temp data in user_data for save/delete callbacks
         context.user_data['temp_uid'] = uid
         context.user_data['preview_message_id'] = sent_msg.message_id
