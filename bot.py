@@ -43,7 +43,6 @@ def save_user_template(user_id: int, category: str, choice: int):
 def get_user_template(user_id: int):
     doc = templates_col.find_one({"user_id": user_id})
     if doc:
-        # Remove the MongoDB _id, user_id keys
         return {k: v for k, v in doc.items() if k not in ("_id", "user_id")}
     return {}
 
@@ -78,7 +77,6 @@ async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text("No characters found or profile is private.")
             return
 
-        # Get user's saved templates if any
         user_templates = get_user_template(user_id)
         profile_tplt = user_templates.get("profile", 1)
 
@@ -102,10 +100,9 @@ async def genshinlogin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=msg.chat_id,
                 photo=f,
                 caption=f"📋 UID {uid} Profile",
-                reply_markup=reply_markup
+                reply_markup=keyboard   # CHANGED!
             )
         os.remove(image_path)
-        # Store temp data in user_data for save/delete callbacks
         context.user_data['temp_uid'] = uid
         context.user_data['preview_message_id'] = sent_msg.message_id
 
@@ -133,7 +130,6 @@ async def save_or_delete_uid_callback(update: Update, context: ContextTypes.DEFA
     else:
         await query.message.edit_caption("Unknown action.")
 
-    # Clean up temp data
     context.user_data.pop('temp_uid', None)
     context.user_data.pop('preview_message_id', None)
 
@@ -146,18 +142,13 @@ async def myc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔢 You have not set your UID. Use /genshinlogin <uid>.")
         return
 
-    # Send fetching message
     msg = await update.message.reply_text("🔄 Fetching your profile card...")
-
     try:
         await send_profile_card(uid, msg, user_id, context)
-
     except Exception as e:
         await msg.edit_text(f"Failed to fetch profile or generate card: {e}")
 
 async def send_profile_card(uid: str, msg, user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Fetch profile and edit `msg` with profile card and inline character buttons."""
-
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
         response = await client.fetch_showcase(int(uid))
 
@@ -184,20 +175,17 @@ async def send_profile_card(uid: str, msg, user_id: int, context: ContextTypes.D
             row = []
     if row:
         keyboard.append(row)
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    keyboard = InlineKeyboardMarkup(keyboard)   # use consistent variable name
 
     with open(image_path, "rb") as f:
-        media = InputMediaPhoto(f, caption=f"📋 UID {uid} Profile")
         await msg.delete()
         sent_msg = await context.bot.send_photo(
             chat_id=msg.chat_id,
             photo=f,
             caption=f"📋 UID {uid} Profile",
-            reply_markup=reply_markup
+            reply_markup=keyboard   # CHANGED!
         )
     os.remove(image_path)
-
-    # Save message_id and uid in user_data for character card navigation
     context.user_data['last_profile_message_id'] = sent_msg.message_id
     context.user_data['uid'] = uid
 
@@ -214,11 +202,6 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     char_id = int(query.data.split("_")[1])
 
-    # Retrieve message to edit
-    chat_id = query.message.chat_id
-    msg_id = query.message.message_id
-
-    # Send "Fetching character card..." edit
     try:
         await query.message.edit_caption("🔄 Fetching character build card...")
 
@@ -242,15 +225,14 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     image_path = tmp.name
                     img.save(image_path)
 
-                keyboard = InlineKeyboardMarkup([
+                go_back_keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("⬅️ Go Back", callback_data="go_back_profile")]
                 ])
 
                 with open(image_path, "rb") as f:
-                    # Edit media (photo + caption + buttons)
                     await query.message.edit_media(
                         media=InputMediaPhoto(f, caption=f"🔧 Build: {char_name}"),
-                        reply_markup=keyboard
+                        reply_markup=go_back_keyboard
                     )
                 os.remove(image_path)
                 break
@@ -272,7 +254,6 @@ async def go_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     msg = query.message
-    # Show "Fetching profile card..." message then re-render profile card in-place.
     try:
         await query.message.edit_caption("🔄 Regenerating profile card...")
         await send_profile_card(uid, msg, user_id, context)
@@ -321,12 +302,12 @@ async def store_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user_template(user_id, category, choice)
     await query.answer()
     await query.message.reply_text(f"✅ {category.capitalize()} template set to {choice}")
+
 def register_handlers(app: Application):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("genshinlogin", genshinlogin))
     app.add_handler(CommandHandler("myc", myc))
     app.add_handler(CommandHandler("template", template_menu))
-
     app.add_handler(CallbackQueryHandler(save_or_delete_uid_callback, pattern="^(save_uid|delete_uid)$"))
     app.add_handler(CallbackQueryHandler(profile_selector, pattern="choose_profile_template"))
     app.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
@@ -358,8 +339,7 @@ async def main():
         print("⚠️ Skipping asset update (set UPDATE_ASSETS=true to enable)")
     print("🚀 Bot starting...")
     await application.run_polling()
-# Main entry point
-import asyncio
+
 import nest_asyncio
 if __name__ == "__main__":
     try:
