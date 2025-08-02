@@ -338,25 +338,20 @@ def register_handlers(app: Application):
 
     print("✅ Handlers registered.")
 
-def update_assets_sync():
+async def update_assets():
     from enkanetwork import EnkaNetworkAPI
-
-    async def update_assets():
-        async with EnkaNetworkAPI() as client:
-            await client.update_assets(lang=["EN"])
-
     print("Updating assets...")
-    asyncio.run(update_assets())
+    async with EnkaNetworkAPI() as client:
+        await client.update_assets(lang=["EN"])
     print("Assets update complete.")
 
-def main():
-    from telegram.ext import Application
-    TOKEN = "your_telegram_token_here"
+async def main():
+    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"   # Set your bot token here!
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
-    update_assets_sync()                                     # Async part runs before bot starts
+    await update_assets()    # If you don't need asset updates, you can skip or comment this line
     print("Bot starting...")
-    application.run_polling()                                # Synchronous; manages event loop itself
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
