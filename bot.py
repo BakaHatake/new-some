@@ -337,23 +337,23 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(go_back_callback, pattern="go_back_profile"))
 
     print("✅ Handlers registered.")
-def update_bot_assets_sync():
+
+async def update_assets():
     from enkanetwork import EnkaNetworkAPI
-    async def update_assets():
-        async with EnkaNetworkAPI() as client:
-            await client.update_assets(lang=["EN"])
     print("Updating assets...")
-    asyncio.run(update_assets())
+    async with EnkaNetworkAPI() as client:
+        await client.update_assets(lang=["EN"])
     print("Assets update complete.")
 
 # --- Main entry point ---
-def main():
+async def main():
     TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
-    update_bot_assets_sync()
+    await update_assets()
     print("Bot starting...")
-    application.run_polling()
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
