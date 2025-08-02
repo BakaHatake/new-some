@@ -459,6 +459,7 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("genshinlogin", genshinlogin))
     app.add_handler(CommandHandler("myc", myc))
     app.add_handler(CommandHandler("template", template_menu))
+    app.add_handler(CommandHandler("setimage", setimage))
     app.add_handler(CallbackQueryHandler(save_or_delete_uid_callback, pattern=r"^(save_uid|delete_uid)\|\d+$"))
     app.add_handler(CallbackQueryHandler(profile_selector, pattern="choose_profile_template"))
     app.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
