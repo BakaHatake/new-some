@@ -322,7 +322,6 @@ async def store_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user_template(user_id, category, choice)
     await query.answer()
     await query.message.reply_text(f"✅ {category.capitalize()} template set to {choice}")
-# --- Register handlers ---
 def register_handlers(app: Application):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("genshinlogin", genshinlogin))
@@ -346,12 +345,22 @@ async def update_assets():
     print("Assets update complete.")
 
 async def main():
-    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"   # Set your bot token here!
+    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"  # Set your bot token here!
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
-    await update_assets()    # If you don't need asset updates, you can skip or comment this line
+    await update_assets()    # You can comment this out if you want to skip asset update on every start
     print("Bot starting...")
     await application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if "event loop is already running" in str(e):
+            import nest_asyncio
+            nest_asyncio.apply()
+            loop = asyncio.get_event_loop()
+            loop.create_task(main())
+        else:
+            raise
+
