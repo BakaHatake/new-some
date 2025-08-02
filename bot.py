@@ -238,7 +238,11 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     char_id = int(cbdata.split("_")[1])
-    await query.message.edit_caption("🔄 Fetching character build card...")
+    await query.message.edit_caption("🔄 Fetching character profile card...")
+
+    # Get the user's preferred template, or use default
+    user_templates = get_user_template(user_id)
+    profile_tplt = user_templates.get("profile", 1)
 
     # Get character name for DB lookups
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
@@ -246,7 +250,7 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     characters = response.characters
     char_name = next((c.name for c in characters if c.id == char_id), None)
 
-    # Akasha info for caption and overlays
+    # Akasha info (for caption and overlays if needed)
     akasha_rankings = await fetch_akasha_rankings(uid)
     a = akasha_rankings.get(char_name) if char_name else None
 
@@ -259,51 +263,39 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         caption += "\nAkasha ranking: —"
 
-    # Try loading user's custom background image (saved via `/setimage <char>`)
+    # Look up (your Mongo) for a custom background for THIS character for THIS user
     custom_bg_doc = db['custom_images'].find_one({
         "user_id": user_id,
         "char_name": char_name.lower() if char_name else None
     })
-    custom_bg_url = custom_bg_doc["url"] if custom_bg_doc else None
+    custom_background_url = custom_bg_doc["url"] if custom_bg_doc else None
 
-    user_templates = get_user_template(user_id)
-    card_tplt = user_templates.get("card", 1)
-
-    # Prepare arguments for ENC card generator
-    creat_args = dict(template=card_tplt, akasha=a)
-    if custom_bg_url:
-        creat_args["background"] = custom_bg_url  # Pass as background to ENC, per documentation
+    # Prepare arguments to pass to profile generator, including background if present
+    profile_args = dict(card=True, teamplate=profile_tplt)
+    if custom_background_url:
+        profile_args["background"] = custom_background_url
 
     async with ENC(uid=uid, lang="en") as encard:
-        result = await encard.creat(**creat_args)
+        result = await encard.profile(**profile_args)
 
-    found = False
-    for card_obj in result.card:
-        if card_obj.id == char_id:
-            found = True
-            img = card_obj.card
-            if img is None:
-                await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
-                return
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                image_path = tmp.name
-                await save_image_async(img, image_path)
-            go_back_keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
-            ])
-            with open(image_path, "rb") as f:
-                await query.message.edit_media(
-                    media=InputMediaPhoto(f, caption=caption, parse_mode="HTML"),
-                    reply_markup=go_back_keyboard
-                )
-            os.remove(image_path)
-            break
-    if not found:
-        await query.message.edit_caption("⚠️ Character not found in your profile.")
+    img = result.card if hasattr(result, "card") else result  # PIL Image
 
+    if img is None:
+        await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
+        return
 
-
-
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        image_path = tmp.name
+        await save_image_async(img, image_path)
+    go_back_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
+    ])
+    with open(image_path, "rb") as f:
+        await query.message.edit_media(
+            media=InputMediaPhoto(f, caption=caption, parse_mode="HTML"),
+            reply_markup=go_back_keyboard
+        )
+    os.remove(image_path)
 async def go_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     cbdata, orig_user_id = query.data.split('|')
