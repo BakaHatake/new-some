@@ -43,6 +43,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Welcome! Use /genshinlogin <UID> to login your Genshin Impact account.\n"
         "Then use /myc to view your profile card."
     )
+import akasha
+from akasha.enums import Language
+
 async def fetch_akasha_rankings(uid: int) -> dict:
     async with akasha.AkashaAPI(lang=Language.ENGLISH) as api:
         results = {}
@@ -51,20 +54,18 @@ async def fetch_akasha_rankings(uid: int) -> dict:
             if not character.calculations:
                 continue
             calc = character.calculations[0]
-            leaderboard = []
-            async for board in api.get_leaderboards(calc.id, max_page=1, page_size=3):
-                leaderboard.append({
-                    "rank": board.rank,
-                    "player": getattr(board.owner, "nickname", "—"),
-                    "damage": int(board.calculation.result),
-                })
+            # Fetch total number of users for this rank
+            out_of = getattr(calc, 'out_of', None)
+            if out_of is None:
+                try:
+                    out_of = await api.get_leaderboard_total_size(calc.id)
+                except Exception:
+                    out_of = "?"
             results[character.name] = {
-                "weapon": calc.weapon.name,
                 "top_percent": calc.top_percent,
                 "ranking": calc.ranking,
-                "damage": int(calc.result),
-                "leaderboard": leaderboard,
-                "url": f"https://akasha.cv/leaderboards/{calc.id}",
+                "out_of": out_of,
+                "id": getattr(character, "id", None)
             }
         return results
 
@@ -143,6 +144,10 @@ async def myc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"Failed to fetch profile or generate card: {e}")
 
 async def send_profile_card(uid, msg, user_id, context):
+    import akasha
+    from akasha.enums import Language
+
+    # Fetch Enka profile/character info
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
         response = await client.fetch_showcase(int(uid))
     characters = response.characters
@@ -150,13 +155,30 @@ async def send_profile_card(uid, msg, user_id, context):
         await msg.edit_text("No characters found or profile is private.")
         return
 
-    # Fetch Akasha info
-    akasha_rankings = await fetch_akasha_rankings(uid)
+    # Fetch Akasha Top % and Rankings info
+    async with akasha.AkashaAPI(lang=Language.ENGLISH) as api:
+        akasha_rankings = {}
+        user_calcs = await api.get_calculations_for_user(uid)
+        for character in user_calcs:
+            if not character.calculations:
+                continue
+            calc = character.calculations[0]
+            out_of = getattr(calc, 'out_of', None)
+            if out_of is None:
+                try:
+                    out_of = await api.get_leaderboard_total_size(calc.id)
+                except Exception:
+                    out_of = "?"
+            akasha_rankings[character.name] = {
+                "top_percent": calc.top_percent,
+                "ranking": calc.ranking,
+                "out_of": out_of,
+                "id": getattr(character, "id", None)
+            }
 
     user_templates = get_user_template(user_id)
     profile_tplt = user_templates.get("profile", 1)
 
-    # Pass akasha info to your encard template if it supports overlay
     async with ENC(uid=uid, lang="en") as encard:
         profile = await encard.profile(card=True, teamplate=profile_tplt, akasha=akasha_rankings)
 
@@ -164,13 +186,16 @@ async def send_profile_card(uid, msg, user_id, context):
         image_path = tmp.name
         profile.card.save(image_path)
 
-    # Compose caption with Akasha info
+    # Compose the caption to show only Top X% and (Rank/Total) for every character
     caption = f"📋 UID {uid} Profile"
-    for char, a in akasha_rankings.items():
-        caption += (
-            f"\n<b>{char}</b>: {a['weapon']}, Top {a['top_percent']}%, "
-            f"Rank {a['ranking']}, Damage: {a['damage']}"
-        )
+    for char in characters:
+        a = akasha_rankings.get(char.name)
+        if a:
+            caption += (
+                f"\n<b>{char.name}</b>: Top {a['top_percent']}% ({a['ranking']}/{a['out_of']})"
+            )
+        else:
+            caption += f"\n<b>{char.name}</b>: —"
 
     keyboard, row = [], []
     for idx, char in enumerate(characters[:12]):
@@ -189,7 +214,6 @@ async def send_profile_card(uid, msg, user_id, context):
         )
     os.remove(image_path)
 
-
 async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     cbdata, orig_user_id = query.data.split('|')
@@ -197,42 +221,63 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if query.from_user.id != orig_user_id:
         await query.answer("Only the original user can use these buttons!", show_alert=True)
         return
+
     user_id = query.from_user.id
     uid = get_user_profile(user_id)
     if not uid:
         await query.message.edit_text("UID not set. Please use /genshinlogin first.")
         return
+
     char_id = int(cbdata.split("_")[1])
     await query.message.edit_caption("🔄 Fetching character build card...")
 
-    # Fetch Akasha
+    # Fetch Enka character list for mapping char_id to char_name
+    async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
+        response = await client.fetch_showcase(int(uid))
+    characters = response.characters
+    char_name = next((c.name for c in characters if c.id == char_id), None)
+
+    # Fetch Akasha per-character ranking
     akasha_rankings = await fetch_akasha_rankings(uid)
-    char_name = ""  # Get name from characters list as before
-    # ... (extract char_name matching char_id using your response.characters list)
-    a = akasha_rankings.get(char_name, None)
-    # format per-char Akasha info
-    akasha_lines = ""
+    a = akasha_rankings.get(char_name) if char_name else None
+
+    # Compose caption: ONLY Top X% (Rank/Total)
+    caption = f"🔧 Build: {char_name}"
     if a:
-        top_lines = [
-            f"\nAkasha: {a['weapon']}, Top {a['top_percent']}%, Rank {a['ranking']}, Damage: {a['damage']}",
-            "🏆 Leaderboard:"
-        ]
-        for lb in a["leaderboard"]:
-            top_lines.append(f"{lb['rank']}. {lb['player']} | {lb['damage']}")
-        top_lines.append(f"🌐 <a href='{a['url']}'>Leaderboard</a>")
-        akasha_lines = "\n".join(top_lines)
+        caption += f"\nAkasha: Top {a['top_percent']}% ({a['ranking']}/{a['out_of']})"
+    else:
+        caption += "\nAkasha ranking: —"
 
     user_templates = get_user_template(user_id)
     card_tplt = user_templates.get("card", 1)
     async with ENC(uid=uid, lang="en") as encard:
         result = await encard.creat(template=card_tplt, akasha=a)
-    # ... as before for loading/sending image ...
 
-    caption = f"🔧 Build: {char_name}"
-    if akasha_lines:
-        caption += f"\n{akasha_lines}"
+    # Find the card image for this character
+    found = False
+    for card_obj in result.card:
+        if card_obj.id == char_id:
+            found = True
+            img = card_obj.card
+            if img is None:
+                await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
+                return
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                image_path = tmp.name
+                img.save(image_path)
+            go_back_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
+            ])
+            with open(image_path, "rb") as f:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(f, caption=caption, parse_mode="HTML"),
+                    reply_markup=go_back_keyboard
+                )
+            os.remove(image_path)
+            break
+    if not found:
+        await query.message.edit_caption("⚠️ Character not found in your profile.")
 
-    # ... edit_media with 'caption=caption, parse_mode="HTML"' as above ...
 
 
 async def go_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
