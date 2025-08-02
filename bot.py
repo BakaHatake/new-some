@@ -12,6 +12,7 @@ from enkacard.encbanner import ENC
 from enkanetwork import EnkaNetworkAPI
 from pymongo import MongoClient
 import cloudinary
+import cloudinary.uploader
 cloudinary.config(
     cloud_name='dvpz1tzam',
     api_key='895687319552522',
