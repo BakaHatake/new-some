@@ -220,6 +220,8 @@ async def send_profile_card(uid, msg, user_id, context):
 from urllib.request import urlopen
 from PIL import Image
 import io
+import tempfile
+import os
 
 async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -273,10 +275,16 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_templates = get_user_template(user_id)
     card_tplt = user_templates.get("card", 1)
+
+    # Pass the custom image under the correct kwarg if supported; otherwise, omit
     async with ENC(uid=uid, lang="en") as encard:
-        if custom_img is not None:
-            result = await encard.creat(template=card_tplt, akasha=a, portrait=custom_img)
-        else:
+        try:
+            if custom_img is not None:
+                result = await encard.creat(template=card_tplt, akasha=a, character_art={str(char_id): custom_img})
+            else:
+                result = await encard.creat(template=card_tplt, akasha=a)
+        except TypeError:
+            # Fallback for old API
             result = await encard.creat(template=card_tplt, akasha=a)
 
     found = False
@@ -289,6 +297,7 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 image_path = tmp.name
+                # Ensure save_image_async exists and is imported/defined
                 await save_image_async(img, image_path)
             go_back_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
@@ -302,6 +311,7 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             break
     if not found:
         await query.message.edit_caption("⚠️ Character not found in your profile.")
+
 
 
 
