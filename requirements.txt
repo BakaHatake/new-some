@@ -6,4 +6,4 @@ pillow>=9.0.0
 pymongo
 nest_asyncio
 akasha
-akasha.enums
+
