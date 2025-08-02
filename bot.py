@@ -322,16 +322,8 @@ async def store_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user_template(user_id, category, choice)
     await query.answer()
     await query.message.reply_text(f"✅ {category.capitalize()} template set to {choice}")
-
-# --- Assets update on startup ---
-
-async def update_assets() -> None:
-    async with EnkaNetworkAPI() as client:
-        await client.update_assets(lang=["EN"])
-
 # --- Register handlers ---
-
-async def register_handlers(app: Application):
+def register_handlers(app: Application):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("genshinlogin", genshinlogin))
     app.add_handler(CommandHandler("myc", myc))
@@ -345,18 +337,23 @@ async def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(go_back_callback, pattern="go_back_profile"))
 
     print("✅ Handlers registered.")
+def update_bot_assets_sync():
+    from enkanetwork import EnkaNetworkAPI
+    async def update_assets():
+        async with EnkaNetworkAPI() as client:
+            await client.update_assets(lang=["EN"])
     print("Updating assets...")
-    await update_assets()
+    asyncio.run(update_assets())
     print("Assets update complete.")
 
 # --- Main entry point ---
-
-async def main():
-    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo" 
+def main():
+    TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"
     application = Application.builder().token(TOKEN).build()
-    await register_handlers(application)
+    register_handlers(application)
+    update_bot_assets_sync()
     print("Bot starting...")
-    await application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
