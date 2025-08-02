@@ -351,15 +351,14 @@ async def main():
     TOKEN = "7610705253:AAGVc7Yy-uhBRAq3IESkbDxh4rdhVzZ6OHo"
     application = Application.builder().token(TOKEN).build()
     register_handlers(application)
-
-    if os.getenv("UPDATE_ASSETS", "false").lower() == "true":
+    update_assets_env = os.getenv("UPDATE_ASSETS", "false").strip().lower()
+    print(f"[DEBUG] UPDATE_ASSETS raw value: {repr(os.getenv('UPDATE_ASSETS'))}")
+    if update_assets_env == "true":
         await update_assets()
     else:
         print("⚠️ Skipping asset update (set UPDATE_ASSETS=true to enable)")
-
     print("🚀 Bot starting...")
     await application.run_polling()
-
 # Main entry point
 if __name__ == "__main__":
     try:
