@@ -217,12 +217,6 @@ async def send_profile_card(uid, msg, user_id, context):
     os.remove(image_path)
 
 
-from urllib.request import urlopen
-from PIL import Image
-import io
-import tempfile
-import os
-
 async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     cbdata, orig_user_id = query.data.split('|')
@@ -238,11 +232,7 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     char_id = int(cbdata.split("_")[1])
-    await query.message.edit_caption("🔄 Fetching character profile card...")
-
-    # Get the user's preferred template, or use default
-    user_templates = get_user_template(user_id)
-    profile_tplt = user_templates.get("profile", 1)
+    await query.message.edit_caption("🔄 Fetching character build card...")
 
     # Get character name for DB lookups
     async with enka.GenshinClient(enka.gi.Language.ENGLISH) as client:
@@ -250,7 +240,7 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     characters = response.characters
     char_name = next((c.name for c in characters if c.id == char_id), None)
 
-    # Akasha info (for caption and overlays if needed)
+    # Akasha info for caption and overlays
     akasha_rankings = await fetch_akasha_rankings(uid)
     a = akasha_rankings.get(char_name) if char_name else None
 
@@ -263,39 +253,35 @@ async def character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         caption += "\nAkasha ranking: —"
 
-    # Look up (your Mongo) for a custom background for THIS character for THIS user
-    custom_bg_doc = db['custom_images'].find_one({
-        "user_id": user_id,
-        "char_name": char_name.lower() if char_name else None
-    })
-    custom_background_url = custom_bg_doc["url"] if custom_bg_doc else None
-
-    # Prepare arguments to pass to profile generator, including background if present
-    profile_args = dict(card=True, teamplate=profile_tplt)
-    if custom_background_url:
-        profile_args["background"] = custom_background_url
+    user_templates = get_user_template(user_id)
+    card_tplt = user_templates.get("card", 1)
 
     async with ENC(uid=uid, lang="en") as encard:
-        result = await encard.profile(**profile_args)
+        result = await encard.creat(template=card_tplt, akasha=a)
 
-    img = result.card if hasattr(result, "card") else result  # PIL Image
-
-    if img is None:
-        await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
-        return
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        image_path = tmp.name
-        await save_image_async(img, image_path)
-    go_back_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
-    ])
-    with open(image_path, "rb") as f:
-        await query.message.edit_media(
-            media=InputMediaPhoto(f, caption=caption, parse_mode="HTML"),
-            reply_markup=go_back_keyboard
-        )
-    os.remove(image_path)
+    found = False
+    for card_obj in result.card:
+        if card_obj.id == char_id:
+            found = True
+            img = card_obj.card
+            if img is None:
+                await query.message.edit_caption(f"⚠️ No image found for {char_name}.")
+                return
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                image_path = tmp.name
+                await save_image_async(img, image_path)
+            go_back_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Go Back", callback_data=f"go_back_profile|{user_id}")]
+            ])
+            with open(image_path, "rb") as f:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(f, caption=caption, parse_mode="HTML"),
+                    reply_markup=go_back_keyboard
+                )
+            os.remove(image_path)
+            break
+    if not found:
+        await query.message.edit_caption("⚠️ Character not found in your profile.")
 async def go_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     cbdata, orig_user_id = query.data.split('|')
@@ -402,13 +388,18 @@ async def store_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(f"✅ {category.capitalize()} template set to {choice}")
 BOT_ADMIN_USER_ID = 5192424390
 
-async def setimage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def savebuild(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username or update.effective_user.first_name or str(user_id)
-    if not context.args or not update.message.reply_to_message or not update.message.reply_to_message.photo:
-        await update.message.reply_text("Reply to a photo with /setimage <character name>.")
+    if (
+        not context.args
+        or not update.message.reply_to_message
+        or not update.message.reply_to_message.photo
+        or update.message.reply_to_message.from_user.id != context.bot.id  # << THIS LINE
+    ):
+        await update.message.reply_text("Reply to a PHOTO sent by ME with /savebuild <build name>.")
         return
-    char_name = context.args[0].strip().lower()
+    build_name = ' '.join(context.args).strip().lower()
 
     # Download photo
     photo = update.message.reply_to_message.photo[-1]
@@ -419,7 +410,7 @@ async def setimage(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Upload to Cloudinary
     try:
-        upload_result = cloudinary.uploader.upload(image_path, folder="genshin_custom_images")
+        upload_result = cloudinary.uploader.upload(image_path, folder="genshin_saved_builds")
         cloud_url = upload_result["secure_url"]
     except Exception as e:
         await update.message.reply_text(f"Upload to cloud failed: {e}")
@@ -428,22 +419,67 @@ async def setimage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(image_path)
 
     # Save to MongoDB
-    db['custom_images'].update_one(
-        {"user_id": user_id, "char_name": char_name},
+    db['custom_builds'].update_one(
+        {"user_id": user_id, "name": build_name},
         {"$set": {"url": cloud_url}},
         upsert=True
     )
-    await update.message.reply_text(f"Custom image for {char_name.capitalize()} saved!")
+    await update.message.reply_text(f"Build '{build_name.capitalize()}' saved!")
 
-    # DM the bot admin/user
+    # Notify admin
     admin_text = (
-        f"User @{username} (ID: {user_id}) saved image for '{char_name}': {cloud_url}"
+        f"User @{username} (ID: {user_id}) saved build '{build_name}': {cloud_url}"
     )
     try:
         await context.bot.send_message(chat_id=BOT_ADMIN_USER_ID, text=admin_text)
-    except Exception as e:
-        # Handle errors (e.g., you never started the bot with /start)
+    except Exception:
         pass
+
+async def builds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    builds = list(db['custom_builds'].find({"user_id": user_id}))
+    if not builds:
+        await update.message.reply_text("You have no saved builds.")
+        return
+    keyboard = [
+        [InlineKeyboardButton(b['name'].capitalize(), callback_data=f"loadbuild_{b['name']}")]
+        for b in builds
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Your saved builds:", reply_markup=reply_markup)
+
+async def loadbuild_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    build_name = query.data[len("loadbuild_"):].lower()
+    build = db['custom_builds'].find_one({"user_id": user_id, "name": build_name})
+    if not build:
+        await query.message.edit_text("Build not found.")
+        return
+    url = build["url"]
+    caption = build["name"].capitalize()
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⬅️ Back", callback_data="builds_back"),
+            InlineKeyboardButton("🗑️ Delete (user locked)", callback_data=f"builds_delete_{build_name}")
+        ]
+    ])
+    await query.message.edit_media(
+        media=InputMediaPhoto(url, caption=caption),
+        reply_markup=keyboard
+    )
+async def builds_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Just call the builds list function again
+    await builds(update, context)
+
+async def builds_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    build_name = query.data[len("builds_delete_"):].lower()
+    db['custom_builds'].delete_one({"user_id": user_id, "name": build_name})
+    await query.message.edit_caption(f"❌ Build '{build_name.capitalize()}' deleted!")
+
+
 
 
 def register_handlers(app: Application):
@@ -451,7 +487,11 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("genshinlogin", genshinlogin))
     app.add_handler(CommandHandler("myc", myc))
     app.add_handler(CommandHandler("template", template_menu))
-    app.add_handler(CommandHandler("setimage", setimage))
+    app.add_handler(CommandHandler("savebuild", savebuild))
+    app.add_handler(CommandHandler("builds", builds))
+    app.add_handler(CallbackQueryHandler(builds_back_callback, pattern=r"^builds_back$"))
+    app.add_handler(CallbackQueryHandler(builds_delete_callback, pattern=r"^builds_delete_"))
+    app.add_handler(CallbackQueryHandler(loadbuild_callback, pattern=r"^loadbuild_"))
     app.add_handler(CallbackQueryHandler(save_or_delete_uid_callback, pattern=r"^(save_uid|delete_uid)\|\d+$"))
     app.add_handler(CallbackQueryHandler(profile_selector, pattern="choose_profile_template"))
     app.add_handler(CallbackQueryHandler(card_selector, pattern="choose_card_template"))
